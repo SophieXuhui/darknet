@@ -80,10 +80,21 @@ void resize_yolo_layer(layer *l, int w, int h)
 #endif
 }
 
+// b.x、b.y: 
+//      b.x、b.y，已归一化的bounding box的中心坐标。
+//      x[]，相对cell左上角的偏移，已经做过LOGISTIC回归的归一化的值，对应paper公式中的tx、ty，即预测出的坐标偏移量；
+//      i、j，当前cell相对feature map左上角的偏移，是cell的左上角坐标；对应paper公式中的cx、cy,注意是cell的左上角坐标非中心;
+//      i + x[], 即预测出的box中心，相对feature map左上角的偏移;
+//      lw、lh，当前feature map宽、高；除以lw、lh进行归一化。
+// b.w、b.h:
+//      b.w、b.h，已归一化的bounding box的宽高。
+//      x[]，预测出的box的宽高变化量，exp(x[])宽高变化的缩放因子，有求导计算缩放因子的含义。
+//      biases, anchor的宽高；这里，yolov3的[yolo]层中，anchor的宽高是相对网络输入尺度的，因此归一化时除以网络输入宽高w、h
+//      w、h，网络输入的宽高，除以w、h，进行归一化
 box get_yolo_box(float *x, float *biases, int n, int index, int i, int j, int lw, int lh, int w, int h, int stride)
 {
     box b;
-    b.x = (i + x[index + 0*stride]) / lw;
+    b.x = (i + x[index + 0*stride]) / lw; // b.x为归一化的值
     b.y = (j + x[index + 1*stride]) / lh;
     b.w = exp(x[index + 2*stride]) * biases[2*n]   / w;
     b.h = exp(x[index + 3*stride]) * biases[2*n+1] / h;
@@ -134,19 +145,21 @@ void forward_yolo_layer(const layer l, network net)
     int i,j,b,t,n;
     memcpy(l.output, net.input, l.outputs*l.batch*sizeof(float));
 
-    // LOGISTIC回归计算box的x,y,以及obj、class的置信度；如果GPU, 是用forward_yolo_layer_gpu()函数并回归计算
+    // LOGISTIC回归计算box的x,y,以及obj、class的置信度；如果GPU, 是用forward_yolo_layer_gpu()函数回归计算
     // LOGISTIC: f(x) = 1/(1 + e^(-x)), 输出值归一化到0～1，且可以0.5划分为2类。x = 0, f=0.5; x < 0, 0 < f < 0.5; x > 0,  0.5 < f < 1
     // logistic一般用于二分类，而softmax是多分类，参考https://blog.csdn.net/kevin_123c/article/details/51684971
-    // logistic与softmax的使用，对比forward_yolo_layer()和forward_region_layer()
+    // softmax的使用参考forward_region_layer()
     
-    // l.output中信息存储顺序：平面结构，依次存x、y、w、h、objness……即，先存所有box的x值，长度为l.w*l.h，因此，stride=l.w*l.h
+    // l.output中信息存储顺序：平面结构，依次存x、y、w、h、objness、class1—conf，class2-conf……即，先存所有box的x值，长度为stride=l.w*l.h
+    // 假设l.w*l.h = 2*2, 3个anchor，则：
+    // xxxxyyyywwwwhhhhoooocccc xxxxyyyywwwwhhhhoooocccc xxxxyyyywwwwhhhhoooocccc
 #ifndef GPU  
     for (b = 0; b < l.batch; ++b){ // 一个batch的图片数，由cfg配置的batch/subdivision计算（32/8 = 4），parse.c -> parse_net_options()
         for(n = 0; n < l.n; ++n){  // 当前yolo层的anchor个数, 即cfg中yolo层的mask定义的anchor的个数
-            int index = entry_index(l, b, n*l.w*l.h, 0);  // box信息的开始索引，存储顺序：x,y,w,h,objeness，class1—conf，class-conf……
-            activate_array(l.output + index, 2*l.w*l.h, LOGISTIC);  // box的坐标x,y进行计算, 2*l.w*l.h表示把所有x,y值全部处理
-            index = entry_index(l, b, n*l.w*l.h, 4);      // 4,为box的objness的索引，偏移掉0，1，2，3分别是x,y,w,h
-            activate_array(l.output + index, (1+l.classes)*l.w*l.h, LOGISTIC);  // box的objness、class置信度值进行计算
+            int index = entry_index(l, b, n*l.w*l.h, 0);  // 0，box的rect的索引
+            activate_array(l.output + index, 2*l.w*l.h, LOGISTIC);  // 计算box的x,y（乘2）, 处理featuremap上所有box的x,y值（乘l.w*l.h）
+            index = entry_index(l, b, n*l.w*l.h, 4);      // 4，box的objness的索引
+            activate_array(l.output + index, (1+l.classes)*l.w*l.h, LOGISTIC);  // 计算box的objness、class置信度
         }
     }
 #endif
@@ -170,9 +183,9 @@ void forward_yolo_layer(const layer l, network net)
                     box pred = get_yolo_box(l.output, l.biases, l.mask[n], box_index, i, j, l.w, l.h, net.w, net.h, l.w*l.h);
                     float best_iou = 0;
                     int best_t = 0;
-                    for(t = 0; t < l.max_boxes; ++t){  // max_boxes :一张图片中最多的真值box的个数，默认：90，parse.c  -> parse_yolo()
-                        box truth = float_to_box(net.truth + t*(4 + 1) + b*l.truths, 1);  // net.truth存了一个batch中所有真值box的坐标和类别（4+1）
-                        if(!truth.x) break; // l.truths:一张图中最多的真值box的信息数（坐标和类别），90*(4+1) , make_yolo_ layer(), region分支是30*（l.coords+1）
+                    for(t = 0; t < l.max_boxes; ++t){  // max_boxes :一张图片中最多的GT的box数，默认：90，parse.c  -> parse_yolo()
+                        box truth = float_to_box(net.truth + t*(4 + 1) + b*l.truths, 1);  // net.truth存了一个batch中所有GT box的坐标和类别（4+1）
+                        if(!truth.x) break; // l.truths:一张图中最多的GT box的信息数（坐标和类别），90*(4+1) , make_yolo_ layer(), region分支是30*（l.coords+1）
                         float iou = box_iou(pred, truth);
                         if (iou > best_iou) {  // 对每个预测的box，将当前图像上的所有ground truth与之比较，寻找best_iou
                             best_iou = iou;
