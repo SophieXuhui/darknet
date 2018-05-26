@@ -80,6 +80,7 @@ void resize_yolo_layer(layer *l, int w, int h)
 #endif
 }
 
+// 获取预测出的box偏移，转为bounding box且归一化
 // b.x、b.y: 
 //      b.x、b.y，已归一化的bounding box的中心坐标。
 //      x[]，相对cell左上角的偏移，已经做过LOGISTIC回归的归一化的值，对应paper公式中的tx、ty，即预测出的坐标偏移量；
@@ -101,16 +102,21 @@ box get_yolo_box(float *x, float *biases, int n, int index, int i, int j, int lw
     return b;
 }
 
+// 根据ground truth和预测值，计算box的dalta
 float delta_yolo_box(box truth, float *x, float *biases, int n, int index, int i, int j, int lw, int lh, int w, int h, float *delta, float scale, int stride)
 {
     box pred = get_yolo_box(x, biases, n, index, i, j, lw, lh, w, h, stride);
     float iou = box_iou(pred, truth);
 
+    // 将ground truth转为相对proposal的偏移量（坐标偏移、宽高缩放尺度）
+    // 这里的truth已经相对featuremap归一化了（即经voc_label.py转为labels了），则先换算到featuremap尺度，再计算偏移量
     float tx = (truth.x*lw - i);
     float ty = (truth.y*lh - j);
-    float tw = log(truth.w*w / biases[2*n]);
+    float tw = log(truth.w*w / biases[2*n]);  // biases是相对网络输入的尺度，所以乘以了网络尺度w（*w）
     float th = log(truth.h*h / biases[2*n + 1]);
 
+    // 分别计算4个delta
+    // scale: 2 - truth.w*truth.h
     delta[index + 0*stride] = scale * (tx - x[index + 0*stride]);
     delta[index + 1*stride] = scale * (ty - x[index + 1*stride]);
     delta[index + 2*stride] = scale * (tw - x[index + 2*stride]);
@@ -163,9 +169,16 @@ void forward_yolo_layer(const layer l, network net)
         }
     }
 #endif
-    // 计算loss, 训练阶段才进行
+    
+    // 清空上一轮batch训练的delta值
     memset(l.delta, 0, l.outputs * l.batch * sizeof(float));
-    if(!net.train) return;      // 测试时net.train=0，训练时net.train=1
+    
+    // 训练时net.train=1，测试时net.train=0
+    if(!net.train) return; 
+    
+    // 计算一个batch的cost
+    // delta： 先计算预测结果与GT的差值delta，分别是box的：x,y,w,h,objectness,class_conf
+    // cost：  综合各类的delta计算cost
     float avg_iou = 0;
     float recall = 0;
     float recall75 = 0;
@@ -175,29 +188,48 @@ void forward_yolo_layer(const layer l, network net)
     int count = 0;
     int class_count = 0;
     *(l.cost) = 0;
-    for (b = 0; b < l.batch; ++b) {  // 逐张处理一个batch的图片
-        for (j = 0; j < l.h; ++j) {  // 当前featuremap的高, l.w为宽
-            for (i = 0; i < l.w; ++i) {
-                for (n = 0; n < l.n; ++n) {
-                    int box_index = entry_index(l, b, n*l.w*l.h + j*l.w + i, 0); // 根据索引，获取预测出的obj box
-                    box pred = get_yolo_box(l.output, l.biases, l.mask[n], box_index, i, j, l.w, l.h, net.w, net.h, l.w*l.h);
+    
+    // 计算一个batch上的delta
+    
+    for (b = 0; b < l.batch; ++b) {         // 逐张处理一个batch的图片
+        
+        // step 1
+        // 先将预测出的每个box，均默认为非目标(非目标数量大)，并计算objectness的delta
+        for (j = 0; j < l.h; ++j) {         
+            for (i = 0; i < l.w; ++i) {     // 当前featuremap的高, l.w为宽
+                for (n = 0; n < l.n; ++n) { // 当前yolo层的anchor数
+                    
+                    // step 1.1 : 对当前box与所有ground truth比较寻找best_iou
+                    int box_index = entry_index(l, b, n*l.w*l.h + j*l.w + i, 0);  // 计算box在预测结果中的开始位置索引
+                    box pred = get_yolo_box(l.output, l.biases, l.mask[n], box_index, i, j, l.w, l.h, net.w, net.h, l.w*l.h); // 获取预测的box，归一化的x,y,w,h
+                    
                     float best_iou = 0;
                     int best_t = 0;
                     for(t = 0; t < l.max_boxes; ++t){  // max_boxes :一张图片中最多的GT的box数，默认：90，parse.c  -> parse_yolo()
                         box truth = float_to_box(net.truth + t*(4 + 1) + b*l.truths, 1);  // net.truth存了一个batch中所有GT box的坐标和类别（4+1）
-                        if(!truth.x) break; // l.truths:一张图中最多的GT box的信息数（坐标和类别），90*(4+1) , make_yolo_ layer(), region分支是30*（l.coords+1）
+                        if(!truth.x) break; // l.truths:一张图中最多的GT box的信息buffer（坐标和类别），90*(4+1) , make_yolo_ layer(), region分支是30*（l.coords+1）
                         float iou = box_iou(pred, truth);
-                        if (iou > best_iou) {  // 对每个预测的box，将当前图像上的所有ground truth与之比较，寻找best_iou
+                        if (iou > best_iou) {  
                             best_iou = iou;
                             best_t = t;
                         }
                     }
+                    
+                    // step 1.2  : 计算objectness的delta
+                    // l.output[obj_index]：是否目标置信度值，已logistic规范化到0～1，0.5为中心
+                    // 默认检测到的都是非目标，delta = 0 - l.output[obj_index]
+                    // 如果objectness越小，这里默认为非目标是更准的，则delta越小，（但若后面step2通过iou将其判断为obj，会修改delta = 1-objectness），变大
+                    // 如果objectness越大，这里默认为非目标是不准的，则delta越大，（同上，delta = 1-objectness，变小）
+                    // 若best_iou满足阈值（yolov3.cfg设为0.7，代码默认0.5），与GT重合度很高，
+                    // 则直接认为该pred box预测很准，是目标obj，则delta为0, 无需考虑objectness值
                     int obj_index = entry_index(l, b, n*l.w*l.h + j*l.w + i, 4);
                     avg_anyobj += l.output[obj_index];
-                    l.delta[obj_index] = 0 - l.output[obj_index];
+                    l.delta[obj_index] = 0 - l.output[obj_index];  // 0, 默认检测到的都是非目标
                     if (best_iou > l.ignore_thresh) {
                         l.delta[obj_index] = 0;
                     }
+                    
+                    // l.truth_thresh 输入为1，代码不执行
                     if (best_iou > l.truth_thresh) {
                         l.delta[obj_index] = 1 - l.output[obj_index];
 
@@ -211,49 +243,71 @@ void forward_yolo_layer(const layer l, network net)
                 }
             }
         }
+        
+        // step 2
+        // 对每个GT，与所有anchor（不仅是当前层anchor）中找best_iou
+        // 通过坐标偏移来消除坐标的影响，通过计算iou,找宽高比和大小最接近的
         for(t = 0; t < l.max_boxes; ++t){
             box truth = float_to_box(net.truth + t*(4 + 1) + b*l.truths, 1);
 
             if(!truth.x) break;
             float best_iou = 0;
             int best_n = 0;
-            i = (truth.x * l.w);
-            j = (truth.y * l.h);
-            box truth_shift = truth;
-            truth_shift.x = truth_shift.y = 0;
+            i = (truth.x * l.w); // 当前GT中心坐标(truth.x * l.w)所在cell的左上角坐标，因为强制转为了int型，向下取整截断为左上角坐标
+            j = (truth.y * l.h); 
+            box truth_shift = truth;            // 输入的truth是相对featuremap归一化的（voc_label.py计算的labels)
+            truth_shift.x = truth_shift.y = 0;  // 偏移到与anchor一样的位置，以cell的左上角点为中心点坐标
             for(n = 0; n < l.total; ++n){
                 box pred = {0};
                 pred.w = l.biases[2*n]/net.w;
                 pred.h = l.biases[2*n+1]/net.h;
-                float iou = box_iou(pred, truth_shift);
+                float iou = box_iou(pred, truth_shift); // 计算anchor与GT的best_iou
                 if (iou > best_iou){
                     best_iou = iou;
                     best_n = n;
                 }
             }
 
-            int mask_n = int_index(l.mask, best_n, l.n);
+            // 在当前yolo层的mask中获取best_n对应的anchor的索引，有可能为-1,因为best_n不一定是在当前yolo检测层
+            // best_n, 是相对所有anchor的索引
+            // mask_n，是相对当前yolo层的anchor的索引，anchor[mask_n] --> best_n
+            int mask_n = int_index(l.mask, best_n, l.n); 
+            
+            // 当前GT，best_n在当前层的mask中
             if(mask_n >= 0){
-                int box_index = entry_index(l, b, mask_n*l.w*l.h + j*l.w + i, 0);
+                int box_index = entry_index(l, b, mask_n*l.w*l.h + j*l.w + i, 0);   // 与该anchor对应的、最接近该GT的box，i、j是GT的中心坐标
+                
+                // 计算gt与pred的iou、box的delta
                 float iou = delta_yolo_box(truth, l.output, l.biases, best_n, box_index, i, j, l.w, l.h, net.w, net.h, l.delta, (2-truth.w*truth.h), l.w*l.h);
-
+                
+                // 计算objness的delta
+                // 通过iou判断，认为当前pred的box是obj
+                // 如果objness值越大，说明当前预测的越准，则delta越小
+                // 如果objness值越小，说明当前预测的不准，则delta越大
                 int obj_index = entry_index(l, b, mask_n*l.w*l.h + j*l.w + i, 4);
                 avg_obj += l.output[obj_index];
                 l.delta[obj_index] = 1 - l.output[obj_index];
 
-                int class = net.truth[t*(4 + 1) + b*l.truths + 4];
+                // 计算类别的delta
+                // 各个类别都计算delta，预测的class_conf已logistic归一化到0～1
+                // 已通过前面iou计算，认为当前pred的box的类别是GT的类别
+                // 与GT一样的类别，delta = 1 - class_conf，class_conf越大（接近1）,delta越小
+                // 与GT不同的类别, delta = 0 - class_conf,
+                int class = net.truth[t*(4 + 1) + b*l.truths + 4];  // GT的类别
                 if (l.map) class = l.map[class];
-                int class_index = entry_index(l, b, mask_n*l.w*l.h + j*l.w + i, 4 + 1);
+                int class_index = entry_index(l, b, mask_n*l.w*l.h + j*l.w + i, 4 + 1); // 预测的class置信度值位置索引
                 delta_yolo_class(l.output, l.delta, class_index, class, l.classes, l.w*l.h, &avg_cat);
 
                 ++count;
                 ++class_count;
-                if(iou > .5) recall += 1;
+                if(iou > .5) recall += 1;   // pred与GT的iou
                 if(iou > .75) recall75 += 1;
                 avg_iou += iou;
             }
         }
     }
+    
+    //  计算一个batch的cost
     *(l.cost) = pow(mag_array(l.delta, l.outputs * l.batch), 2);
     printf("Region %d Avg IOU: %f, Class: %f, Obj: %f, No Obj: %f, .5R: %f, .75R: %f,  count: %d\n", net.index, avg_iou/count, avg_cat/class_count, avg_obj/count, avg_anyobj/(l.w*l.h*l.n*l.batch), recall/count, recall75/count, count);
 }
