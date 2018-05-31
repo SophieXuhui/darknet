@@ -809,6 +809,7 @@ void run_detector(int argc, char **argv)
     }
     char *gpu_list = find_char_arg(argc, argv, "-gpus", 0);
     char *outfile = find_char_arg(argc, argv, "-out", 0);
+    char *outtxt = find_char_arg(argc, argv, "-outtxt", 0);
     int *gpus = 0;
     int gpu = 0;
     int ngpus = 0;
@@ -853,6 +854,10 @@ void run_detector(int argc, char **argv)
         char *name_list = option_find_str(options, "names", "data/names.list");
         char **names = get_labels(name_list);
         demo(cfg, weights, thresh, cam_index, filename, names, classes, frame_skip, prefix, avg, hier_thresh, width, height, fps, fullscreen);
+    }
+    else if(0==strcmp(argv[2], "batch"))
+    {
+        test_batch_detector(datacfg, cfg, weights, filename, thresh, hier_thresh, outfile, outtxt);
     }
     //else if(0==strcmp(argv[2], "extract")) extract_detector(datacfg, cfg, weights, cam_index, filename, class, thresh, frame_skip);
     //else if(0==strcmp(argv[2], "censor")) censor_detector(datacfg, cfg, weights, cam_index, filename, class, thresh, frame_skip);
