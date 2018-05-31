@@ -140,7 +140,7 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
             if(ngpus != 1) sync_nets(nets, ngpus, 0);
 #endif
             char buff[256];
-            sprintf(buff, "%s/%s_%d.weights", backup_directory, base, i);
+            sprintf(buff, "%s/%s_%d_%f.weights", backup_directory, base, i, avg_loss); //by sophie
             save_weights(net, buff);
         }
         free_data(train);
@@ -572,6 +572,7 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
     double time;
     char buff[256];
     char *input = buff;
+    char outfullpath[1024]; // by sophie
     float nms=.45;
     while(1){
         if(filename){
@@ -604,7 +605,10 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
         draw_detections(im, dets, nboxes, thresh, names, alphabet, l.classes);
         free_detections(dets, nboxes);
         if(outfile){
-            save_image(im, outfile);
+            memset(outfullpath, 0, sizeof(char) * 1024);  // by xh
+            sprintf(outfullpath, "%s/%s_out", outfile, basecfg(filename));
+            save_image(im, outfullpath);
+            //save_image(im, outfile);
         }
         else{
             save_image(im, "predictions");
