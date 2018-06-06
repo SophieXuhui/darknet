@@ -421,18 +421,20 @@ int main(int argc, char **argv)
         cuda_set_device(gpu_index);
     }
 #endif
-
-    if (0 == strcmp(argv[1], "average")){
-        average(argc, argv);
-    } else if (0 == strcmp(argv[1], "yolo")){
-        run_yolo(argc, argv);
+    // 相比之前版本
+    // 新增： print、segmenter
+    // 减少：voxel、vid_rnn、compare、dice、writing
+    if (0 == strcmp(argv[1], "average")){  // average: 一个网络，多个权重文件，计算平均权重文件，按层按元素逐个加和、再平均
+        average(argc, argv);               // ./darknet average xx.cfg outfile weight1 weight2 weight3 …… 
+    } else if (0 == strcmp(argv[1], "yolo")){ // yolo：单线程, 无随机缩放，REGION_DATA
+        run_yolo(argc, argv);                 // REGION_DATA: load_data_region加载数据,数据增广由jitter控制随机crop，超出部分复制原边界，无缩放
     } else if (0 == strcmp(argv[1], "super")){
         run_super(argc, argv);
     } else if (0 == strcmp(argv[1], "lsd")){
         run_lsd(argc, argv);
-    } else if (0 == strcmp(argv[1], "detector")){
-        run_detector(argc, argv);
-    } else if (0 == strcmp(argv[1], "detect")){
+    } else if (0 == strcmp(argv[1], "detector")){ // detector: 支持多GPU，支持随机缩放, DETECTION_DATA
+        run_detector(argc, argv);                 // DETECTION_DATA：load_data_detection加载数据,jitter和scale控制随机crop和缩放，且按长边缩放，不足补0.5
+    } else if (0 == strcmp(argv[1], "detect")){   // detect ：几乎同detector命令，这里指定用cfg/coco.data
         float thresh = find_float_arg(argc, argv, "-thresh", .5);
         char *filename = (argc > 4) ? argv[4]: 0;
         char *outfile = find_char_arg(argc, argv, "-out", 0);
@@ -448,7 +450,7 @@ int main(int argc, char **argv)
         run_coco(argc, argv);
     } else if (0 == strcmp(argv[1], "classify")){
         predict_classifier("cfg/imagenet1k.data", argv[2], argv[3], argv[4], 5);
-    } else if (0 == strcmp(argv[1], "classifier")){
+    } else if (0 == strcmp(argv[1], "classifier")){ // classifier: 
         run_classifier(argc, argv);
     } else if (0 == strcmp(argv[1], "regressor")){
         run_regressor(argc, argv);
@@ -466,7 +468,7 @@ int main(int argc, char **argv)
         run_captcha(argc, argv);
     } else if (0 == strcmp(argv[1], "nightmare")){
         run_nightmare(argc, argv);
-    } else if (0 == strcmp(argv[1], "rgbgr")){
+    } else if (0 == strcmp(argv[1], "rgbgr")){ // rgbgr: 换conv层权重的通道顺序，darknet加载、处理是R/G/B顺序，只换im.c==3的层，一般为图像输入层
         rgbgr_net(argv[2], argv[3], argv[4]);
     } else if (0 == strcmp(argv[1], "reset")){
         reset_normalize_net(argv[2], argv[3], argv[4]);
@@ -478,26 +480,26 @@ int main(int argc, char **argv)
         normalize_net(argv[2], argv[3], argv[4]);
     } else if (0 == strcmp(argv[1], "rescale")){
         rescale_net(argv[2], argv[3], argv[4]);
-    } else if (0 == strcmp(argv[1], "ops")){
+    } else if (0 == strcmp(argv[1], "ops")){ // ops：计算网络卷积层浮点数计算量flops，只要输入cfg文件即可：./darknet ops xxx.cfg
         operations(argv[2]);
-    } else if (0 == strcmp(argv[1], "speed")){
-        speed(argv[2], (argc > 3 && argv[3]) ? atoi(argv[3]) : 0);
-    } else if (0 == strcmp(argv[1], "oneoff")){
+    } else if (0 == strcmp(argv[1], "speed")){ // speed：计算网络前向时间，单GPU, 默认前向1000次计算，只卷积，不包含region层等框回归部分
+        speed(argv[2], (argc > 3 && argv[3]) ? atoi(argv[3]) : 0);  // ./darknet speed xxx*.cfg N（N可指定的计算次数）
+    } else if (0 == strcmp(argv[1], "oneoff")){ // oneoff： 卷积输出层（region前一层），权重、bias ？？？
         oneoff(argv[2], argv[3], argv[4]);
     } else if (0 == strcmp(argv[1], "oneoff2")){
         oneoff2(argv[2], argv[3], argv[4], atoi(argv[5]));
-    } else if (0 == strcmp(argv[1], "print")){
-        print_weights(argv[2], argv[3], atoi(argv[4]));
-    } else if (0 == strcmp(argv[1], "partial")){
+    } else if (0 == strcmp(argv[1], "print")){  // print: 屏幕显示指定层的weights值，根据kenel数按行打印，每行kenel.w * kenel.h * input_chnl
+        print_weights(argv[2], argv[3], atoi(argv[4]));  //./darknet print xx.cfg xx.weights N (层序号，从0开始，包括res、route等层）
+    } else if (0 == strcmp(argv[1], "partial")){ // partial：从已有权重文件中获取部分，获取从第0层开始到给定第N层的权重，保存输出
         partial(argv[2], argv[3], argv[4], atoi(argv[5]));
-    } else if (0 == strcmp(argv[1], "average")){
-        average(argc, argv);
-    } else if (0 == strcmp(argv[1], "visualize")){
-        visualize(argv[2], (argc > 3) ? argv[3] : 0);
-    } else if (0 == strcmp(argv[1], "mkimg")){
-        mkimg(argv[2], argv[3], atoi(argv[4]), atoi(argv[5]), atoi(argv[6]), argv[7]);
-    } else if (0 == strcmp(argv[1], "imtest")){
-        test_resize(argv[2]);
+    } else if (0 == strcmp(argv[1], "average")){ // average: 一个网络，多个权重文件，计算平均权重文件，按层按元素逐个加和、再平均
+        average(argc, argv);                     // ./darknet average xx.cfg outfile weight1 weight2 weight3 ……
+    } else if (0 == strcmp(argv[1], "visualize")){  // visualize: 图片形式显示每一卷积层的卷积核参数（个数、值分布），值归一化再*255，.png
+        visualize(argv[2], (argc > 3) ? argv[3] : 0); // ./darknet visualize xx.cfg  xx.weights（可有可无）
+    } else if (0 == strcmp(argv[1], "mkimg")){        // mkimg ： 根据网络和权重，生成第一层卷积的权重的图 ？？
+        mkimg(argv[2], argv[3], atoi(argv[4]), atoi(argv[5]), atoi(argv[6]), argv[7]); // ./darknet visualize xx.cfg  xx.weights h w num path
+    } else if (0 == strcmp(argv[1], "imtest")){  // imtest ：对输入图像多种变换的测试，计算图像像素幅值L2范数，图像灰度，hsv多种变化等
+        test_resize(argv[2]);       // ./darknet imtest  xx.jpg
     } else {
         fprintf(stderr, "Not an option: %s\n", argv[1]);
     }
