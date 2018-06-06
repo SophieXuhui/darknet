@@ -629,6 +629,144 @@ void test_detector(char *datacfg, char *cfgfile, char *weightfile, char *filenam
     }
 }
 
+void test_batch_detector(char *datacfg, char *cfgfile, char *weightfile, char *piclist, float thresh, float hier_thresh, char *dirout, char *outtxt)
+{
+    list *options = read_data_cfg(datacfg);
+    char *name_list = option_find_str(options, "names", "data/names.list");
+    char **names = get_labels(name_list);
+
+    image **alphabet = load_alphabet();
+    network *net = load_network(cfgfile, weightfile, 0);
+    set_batch_network(net, 1);
+    srand(2222222);
+    double time;
+    char buff[1024] = {0};
+    char *input = buff;
+    char out_name[1024] = {0};
+	char outtxt_name[1024] = { 0 };
+    //float nms=.45;
+	float nms=.4;
+	
+	FILE *pf = fopen(piclist, "r");
+	double meantime = 0;
+	int Number = 0;
+    /*while(1){
+        if(filename){
+            strncpy(input, filename, 256);
+        } else {
+            printf("Enter Image Path: ");
+            fflush(stdout);
+            input = fgets(input, 256, stdin);
+            if(!input) return;
+            strtok(input, "\n");
+        }*/
+	while(fgets(input, 1020, pf) != NULL){
+		if(input[strlen(input) - 1] == '\n') input[strlen(input) - 1] = 0;
+        image im = load_image_color(input,0,0);
+        image sized = letterbox_image(im, net->w, net->h);
+        //image sized = resize_image(im, net->w, net->h);
+        //image sized2 = resize_max(im, net->w);
+        //image sized = crop_image(sized2, -((net->w - sized2.w)/2), -((net->h - sized2.h)/2), net->w, net->h);
+        //resize_network(net, sized.w, sized.h);
+		layer l = net->layers[net->n-1];
+
+        float *X = sized.data;
+        time=what_time_is_it_now();
+        network_predict(net, X);
+        printf("%s: Predicted in %f seconds.\n", input, what_time_is_it_now()-time);
+		meantime += what_time_is_it_now()-time;
+		Number++;
+        int nboxes = 0;
+        detection *dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, 0, 1, &nboxes);
+        //printf("%d\n", nboxes);
+        //if (nms) do_nms_obj(boxes, probs, l.w*l.h*l.n, l.classes, nms);
+        if (nms) do_nms_sort(dets, nboxes, l.classes, nms);
+        draw_detections(im, dets, nboxes, thresh, names, alphabet, l.classes);
+        //free_detections(dets, nboxes);
+        if(dirout){
+			sprintf(out_name, "%s/%s", dirout, strrchr(input, '/') + 1);
+			strrchr(out_name, '.')[0] = 0;
+            save_image(im, out_name);
+            //save_image(im, outfile);
+        }
+        /*else{
+            save_image(im, "predictions");
+#ifdef OPENCV
+            cvNamedWindow("predictions", CV_WINDOW_NORMAL); 
+            if(fullscreen){
+                cvSetWindowProperty("predictions", CV_WND_PROP_FULLSCREEN, CV_WINDOW_FULLSCREEN);
+            }
+            show_image(im, "predictions");
+            cvWaitKey(0);
+            cvDestroyAllWindows();
+#endif
+        }*/
+		if(outtxt)
+		{
+			//int w = im.w;
+			//int h = im.h;
+			//int max = w > h ? w : h;
+
+			int i = 0;
+			FILE *pftxt;
+			int objNum = 0;
+			memset(outtxt_name, 0, 1024);
+			sprintf(outtxt_name, "%s/%s", outtxt, strrchr(input, '/') + 1);
+			memcpy(strrchr(outtxt_name, '.') + 1, "txt\0", 4);
+			pftxt = fopen(outtxt_name, "w");
+			
+			for (i = 0; i < nboxes; i++)
+			{
+				int class = max_index(dets[i].prob, l.classes);
+				float prob = dets[i].prob[class];
+				if (prob > thresh)
+				{
+					objNum++;
+				}
+			}
+			fprintf(pftxt, "%d\n", objNum);
+			for (i = 0; i < nboxes; i++)
+			{
+				int class = max_index(dets[i].prob, l.classes);
+				float prob = dets[i].prob[class];
+				if (prob > thresh)
+				{
+					box b = dets[i].bbox;
+
+					// by xh: resize同比例下采样，则直接还原；letterbox采样，则需加如下的还原处理，这里此操作已在获取box的步骤处理
+					//b.x = (b.x - (max - w) / 2. / max) / ((float)w / max);
+					//b.y = (b.y - (max - h) / 2. / max) / ((float)h / max);
+					//b.w *= (float)max / w;
+					//b.h *= (float)max / h;
+
+					//x,y,w,h -> (left,right)(top,bottom), round by xh
+					int left = round((b.x - b.w / 2.)*im.w);
+					int right = round((b.x + b.w / 2.)*im.w);
+					int top = round((b.y - b.h / 2.)*im.h);
+					int bot = round((b.y + b.h / 2.)*im.h);
+
+					if (left < 0) left = 0;
+					if (right > im.w - 1) right = im.w - 1;
+					if (top < 0) top = 0;
+					if (bot > im.h - 1) bot = im.h - 1;
+					fprintf(pftxt, "%s %d %d %d %d %f\n", names[class], left, top, right, bot, prob);	
+				}
+			}
+			fclose(pftxt);
+		}
+
+        free_image(im);
+        free_image(sized);
+        //if (filename) break;
+		memset(out_name, 0, 1024);
+		memset(buff, 0, 1024);
+		free_detections(dets, nboxes);
+    }
+	meantime /= Number;
+	printf("mean of cost time is %f\n", meantime);
+	fclose(pf);
+}
+
 /*
 void censor_detector(char *datacfg, char *cfgfile, char *weightfile, int cam_index, const char *filename, int class, float thresh, int skip)
 {
