@@ -432,7 +432,7 @@ int main(int argc, char **argv)
         run_super(argc, argv);
     } else if (0 == strcmp(argv[1], "lsd")){
         run_lsd(argc, argv);
-    } else if (0 == strcmp(argv[1], "detector")){ // detector: 支持多GPU，支持随机缩放, DETECTION_DATA
+    } else if (0 == strcmp(argv[1], "detector")){ // detector: 支持多GPU，支持随机缩放, DETECTION_DATA，与“yolo”对比
         run_detector(argc, argv);                 // DETECTION_DATA：load_data_detection加载数据,jitter和scale控制随机crop和缩放，且按长边缩放，不足补0.5
     } else if (0 == strcmp(argv[1], "detect")){   // detect ：几乎同detector命令，这里指定用cfg/coco.data
         float thresh = find_float_arg(argc, argv, "-thresh", .5);
@@ -448,9 +448,9 @@ int main(int argc, char **argv)
         run_char_rnn(argc, argv);
     } else if (0 == strcmp(argv[1], "coco")){
         run_coco(argc, argv);
-    } else if (0 == strcmp(argv[1], "classify")){
+    } else if (0 == strcmp(argv[1], "classify")){   // classify : 分类预测调用实例，几乎同classifier，这里指定用cfg/imagenet1k.data进行分类预测
         predict_classifier("cfg/imagenet1k.data", argv[2], argv[3], argv[4], 5);
-    } else if (0 == strcmp(argv[1], "classifier")){ // classifier: 
+    } else if (0 == strcmp(argv[1], "classifier")){ // classifier: 分类的训练、预测调用接口，
         run_classifier(argc, argv);
     } else if (0 == strcmp(argv[1], "regressor")){
         run_regressor(argc, argv);
