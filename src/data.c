@@ -432,8 +432,8 @@ void fill_truth_detection(char *path, int num_boxes, float *truth, int classes, 
         w =  boxes[i].w;
         h =  boxes[i].h;
         id = boxes[i].id;
-
-        if ((w < .001 || h < .001)) {
+        // if ((w < .05 || h < .02)) for plate
+        if ((w < .001 || h < .001)) {   // by xh ，修正答案的box，避免过窄矩形条进入训练，导致虚警
             ++sub;
             continue;
         }
@@ -975,10 +975,11 @@ data load_data_detection(int n, char **paths, int m, int w, int h, int boxes, in
         float dh = jitter * orig.h;
 
         float new_ar = (orig.w + rand_uniform(-dw, dw)) / (orig.h + rand_uniform(-dh, dh));
-        float scale = rand_uniform(.25, 2);
-
+        float scale = rand_uniform(.25, 2); // 相对网络的输入尺度的缩放比例，小于1则下采样+周边填充到网络尺度，大于1则上采样+crop到网络尺度
+        //float scale = rand_uniform(.75, 1.25); //for plate // 另外，目标框在边界时，大于1，且crop，标注框容易截断
         float nw, nh;
-
+        // 此处，训练加载数据，按照长边缩放，在使用模型进行检测时，要对应用letterbox
+        // 若想让训练时，直接缩放，此处修改为  ： nw = w; nh = h; 没有crop和随机调整宽高的操作
         if(new_ar < 1){
             nh = scale * h;
             nw = nh * new_ar;
@@ -993,7 +994,7 @@ data load_data_detection(int n, char **paths, int m, int w, int h, int boxes, in
         place_image(orig, nw, nh, dx, dy, sized);
 
         random_distort_image(sized, hue, saturation, exposure);
-
+        // by xh 左右水平翻转, 不做的话，可以： flip=0;
         int flip = rand()%2;
         if(flip) flip_image(sized);
         d.X.vals[i] = sized.data;
@@ -1262,8 +1263,59 @@ data load_data_augment(char **paths, int n, int m, char **labels, int k, tree *h
     d.shallow = 0;
     d.w=size;
     d.h=size;
+#if 1 //by xh   
     d.X = load_image_augment_paths(paths, n, min, max, size, angle, aspect, hue, saturation, exposure, center);
     d.y = load_labels_paths(paths, n, labels, k, hierarchy);
+#else
+    // by xh: 解析每张图片的类别字符串，paths中每行信息：类别字符串在文件名后且以空格隔开，而不是原来默认的在文件名中
+	// paths格式： 原来  dog_xxxx.jpg   ===>  现在 xxxx.jpg dog ,中间是一个英文空格字符隔开
+	// 因此，先解析paths中的label字符串，生成label矩阵Y; 再去掉paths中结尾的label字符串，再获取图片
+
+	// 先：解析paths中结尾的类别字符串
+	d.y = load_labels_paths(paths, n, labels, k, hierarchy);
+	
+	// 再：加载图像
+	int i,j;
+	matrix X;
+	X.rows = n;
+	X.vals = calloc(X.rows, sizeof(float*));
+	X.cols = 0;
+
+	for (i = 0; i < n; ++i)
+	{
+		char path[4096] = { 0 };
+		strcpy(path, paths[i]);
+
+		// 去掉paths中结尾的类别字符串
+		for (j = 0; j < k; ++j)
+		{
+			if (strstr(path, labels[j]))
+			{
+				char pathnew[4096] = { 0 };
+				char s_replace[1024] = { 0 };
+
+				strcpy(s_replace," ");	//文件名后面是，空格字符+类别字符串，所以空格也要替换掉
+				strcat(s_replace, labels[j]);
+
+				find_replace(path, s_replace, "\0", pathnew); // 替掉label字符串为‘\0’，后面的字符不再被读取了，所以必须保证类别字符串在文件名之后的行尾。
+				memset(path, 0, 4096 * sizeof(char));
+				strcpy(path, pathnew);
+			}
+		}
+
+		// 加载图片、数据增广：无crop，直接缩放
+		image im = load_image_color(path, 0, 0);
+		image crop = resize_image(im, size, size);
+		int flip = rand() % 2;
+		if (flip) flip_image(crop); //随机左右翻转
+		random_distort_image(crop, hue, saturation, exposure);
+
+		free_image(im);
+		X.vals[i] = crop.data;
+		X.cols = crop.h*crop.w*crop.c;
+	}
+	d.X = X;
+#endif    
     if(m) free(paths);
     return d;
 }
