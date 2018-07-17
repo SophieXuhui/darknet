@@ -433,7 +433,7 @@ void get_region_detections(layer l, int w, int h, int netw, int neth, float thre
             }
         }
     }
-    correct_region_boxes(dets, l.w*l.h*l.n, w, h, netw, neth, relative);
+    correct_region_boxes(dets, l.w*l.h*l.n, w, h, netw, neth, relative); // by xh : 注意，直接缩放，而非letterbox，则不需要此步骤的矫正。
 }
 
 #ifdef GPU
