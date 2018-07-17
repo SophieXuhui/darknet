@@ -663,8 +663,8 @@ void test_batch_detector(char *datacfg, char *cfgfile, char *weightfile, char *p
 	while(fgets(input, 1020, pf) != NULL){
 		if(input[strlen(input) - 1] == '\n') input[strlen(input) - 1] = 0;
         image im = load_image_color(input,0,0);
-        image sized = letterbox_image(im, net->w, net->h);
-        //image sized = resize_image(im, net->w, net->h);
+        image sized = letterbox_image(im, net->w, net->h); // 按长边缩放，短边补边，box还原时，检测结果在region_layer.c中get_region_detection做了correct_region_boxes	
+        //image sized = resize_image(im, net->w, net->h);  // 宽高各自缩放，box还原时不需要矫正，直接还原
         //image sized2 = resize_max(im, net->w);
         //image sized = crop_image(sized2, -((net->w - sized2.w)/2), -((net->h - sized2.h)/2), net->w, net->h);
         //resize_network(net, sized.w, sized.h);
@@ -677,7 +677,8 @@ void test_batch_detector(char *datacfg, char *cfgfile, char *weightfile, char *p
 		meantime += what_time_is_it_now()-time;
 		Number++;
         int nboxes = 0;
-        detection *dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, 0, 1, &nboxes);
+        detection *dets = get_network_boxes(net, im.w, im.h, thresh, hier_thresh, 0, 1, &nboxes); // 注意与图像采样方式对应，是否correct_region_boxes
+		// 另外，第二个参数relative，1：box相对网络输入；0：原始尺度
         //printf("%d\n", nboxes);
         //if (nms) do_nms_obj(boxes, probs, l.w*l.h*l.n, l.classes, nms);
         if (nms) do_nms_sort(dets, nboxes, l.classes, nms);
