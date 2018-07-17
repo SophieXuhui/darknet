@@ -1054,6 +1054,97 @@ void demo_classifier(char *datacfg, char *cfgfile, char *weightfile, int cam_ind
 #endif
 }
 
+void validate_classifier_single_mine(char *datacfg, char *filename, char *weightfile, char *outfilepath)
+{
+	int i, j;
+	network *net = load_network(filename, weightfile, 0);
+	set_batch_network(net, 1);
+	srand(time(0));
+
+	list *options = read_data_cfg(datacfg);
+
+	char *label_list = option_find_str(options, "labels", "data/labels.list");
+	char *leaf_list = option_find_str(options, "leaves", 0);
+	if (leaf_list) change_leaves(net->hierarchy, leaf_list);
+	char *valid_list = option_find_str(options, "valid", "data/train.list");
+	int classes = option_find_int(options, "classes", 2);
+	int topk = option_find_int(options, "top", 1);
+
+	char **labels = get_labels(label_list);
+	list *plist = get_paths(valid_list);
+
+	char **paths = (char **)list_to_array(plist);
+	int m = plist->size;
+	free_list(plist);
+
+	float avg_acc = 0;
+	float avg_topk = 0;
+	int *indexes = calloc(topk, sizeof(int));
+
+	FILE *foutfile = NULL;
+	foutfile = fopen(outfilepath, "wb");
+	if(foutfile == NULL)
+	{
+		printf("open outfilepath fail\n");
+	}
+
+	for (i = 0; i < m; ++i){
+
+		// 待预测图片的真实类别
+		int class = -1;
+		char path[4096] = { 0 };  //char *path = paths[i];
+		strcpy(path, paths[i]);
+		int count = 0;
+		for (j = 0; j < classes; ++j)
+		{
+			if (strstr(path, labels[j]))
+			{
+				class = j;
+				char pathnew[4096] = { 0 };
+
+				char s_replace[1024] = { 0 };
+				strcpy(s_replace, " ");	//文件名后面是，空格字符+类别字符串，所以空格也要替换掉
+				strcat(s_replace, labels[j]);
+
+				find_replace(path, s_replace, "\0", pathnew); // 替掉label字符串为‘\0’，后面的字符不再被读取了，所以必须保证类别字符串在文件名之后的行尾。
+				memset(path, 0, 4096 * sizeof(char));
+				strcpy(path, pathnew);
+				++count;
+				//break;
+			}
+		}
+		if (count != 1 && (classes != 1 || count != 0)) printf("Too many or too few labels in validate_classifier_single_mine: %d, %s\n", count, path);
+
+		// 预测图像类别
+		image im = load_image_color(path, 0, 0); // load_image_color(paths[i], 0, 0);
+		image crop = resize_image(im, net->w, net->h);
+		//image crop = center_crop_image(im, net->w, net->h);
+		//image r = letterbox_image(im, net->w, net->h);
+
+		//show_image(im, "orig");
+		//show_image(crop, "cropped");
+		//cvWaitKey(0);
+		float *pred = network_predict(net, crop.data);
+		if (net->hierarchy) hierarchy_predictions(pred, net->outputs, net->hierarchy, 1, 1);
+
+		free_image(im);
+		free_image(crop);
+		top_k(pred, classes, topk, indexes);
+
+		if (indexes[0] == class) avg_acc += 1;
+		for (j = 0; j < topk; ++j){
+			if (indexes[j] == class) avg_topk += 1;
+		}
+
+		//printf("%s, %d, %d, %f, %f\n", path, class, indexes[0], pred[0], pred[1]);
+		printf("%s, %d, %d, %f, %f\n", path, class, indexes[0], pred[class], pred[indexes[0]]);
+		printf("%d: top 1: %d %f, top %d: %d %f\n", i + 1, (int)avg_acc, avg_acc / (i + 1), topk, (int)avg_topk, avg_topk / (i + 1));
+		//fprintf(foutfile, "%s, %d, %d, %f, %f\n", path, class, indexes[0], pred[0], pred[1]);
+		fprintf(foutfile, "%s, %d, %d, %f, %f\n", path, class, indexes[0], pred[class], pred[indexes[0]]);
+	}
+	fprintf(foutfile, "%d : top 1: %d %f, top %d: %d %f\n", i, (int)avg_acc, avg_acc / i, topk, (int)avg_topk, avg_topk / i);
+	if (foutfile) fclose(foutfile);
+}
 
 void run_classifier(int argc, char **argv)
 {
@@ -1066,7 +1157,7 @@ void run_classifier(int argc, char **argv)
     int ngpus;
     int *gpus = read_intlist(gpu_list, &ngpus, gpu_index);
 
-
+    char *outfilepath = find_char_arg(argc, argv, "-outxt", 0);
     int cam_index = find_int_arg(argc, argv, "-c", 0);
     int top = find_int_arg(argc, argv, "-t", 0);
     int clear = find_arg(argc, argv, "-clear");
@@ -1090,6 +1181,7 @@ void run_classifier(int argc, char **argv)
     else if(0==strcmp(argv[2], "valid10")) validate_classifier_10(data, cfg, weights);
     else if(0==strcmp(argv[2], "validcrop")) validate_classifier_crop(data, cfg, weights);
     else if(0==strcmp(argv[2], "validfull")) validate_classifier_full(data, cfg, weights);
+    else if(0==strcmp(argv[2], "batch")) validate_classifier_single_mine(data, cfg, weights, outfilepath);
 }
 
 
