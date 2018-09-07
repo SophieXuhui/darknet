@@ -588,15 +588,15 @@ load_args get_base_args(network *net);
 
 void free_data(data d);
 
-typedef struct node{
-    void *val;
-    struct node *next;
-    struct node *prev;
+typedef struct node{	// 定义node的双向链表
+    void *val;		// 数据域，存储数据
+    struct node *next;	// 后向指针，指向下一个node，用于访问节点数据或遍历节点
+    struct node *prev;	// 前向指针，指向前一个node
 } node;
 
-typedef struct list{
-    int size;
-    node *front;
+typedef struct list{	// 定义链表结构体
+    int size;		// 长度
+    node *front;	//
     node *back;
 } list;
 
