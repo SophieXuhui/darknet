@@ -596,8 +596,8 @@ typedef struct node{	// 定义node的双向链表
 
 typedef struct list{	// 定义链表结构体
     int size;		// 长度
-    node *front;	//
-    node *back;
+    node *front;	// 指向链表的第一个节点
+    node *back;		// 指向链表的最后一个节点
 } list;
 
 pthread_t load_data(load_args args);
