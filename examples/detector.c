@@ -5,45 +5,46 @@ static int coco_ids[] = {1,2,3,4,5,6,7,8,9,10,11,13,14,15,16,17,18,19,20,21,22,2
 
 void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, int ngpus, int clear)
 {
-    list *options = read_data_cfg(datacfg);
-    char *train_images = option_find_str(options, "train", "data/train.list");
-    char *backup_directory = option_find_str(options, "backup", "/backup/");
+    list *options = read_data_cfg(datacfg);     // 解析数据集.data配置文件,datacfg,以“=”为分隔符解析出key、val组，插入list
+    char *train_images = option_find_str(options, "train", "data/train.list");  // 获取训练集列表
+    char *backup_directory = option_find_str(options, "backup", "/backup/");    // 获取模型结果目录
 
     srand(time(0));
-    char *base = basecfg(cfgfile);
+    char *base = basecfg(cfgfile);  // 提取网络配置文件的名字，无前缀路径，无后缀
     printf("%s\n", base);
     float avg_loss = -1;
-    network **nets = calloc(ngpus, sizeof(network));
+    network **nets = calloc(ngpus, sizeof(network));    // 按照训练配置的GPU个数，分配训练用的网络内存
 
     srand(time(0));
     int seed = rand();
     int i;
-    for(i = 0; i < ngpus; ++i){
+    for(i = 0; i < ngpus; ++i){     // 为每一个gpu解析一套训练参数、网络结构、预训练模型
         srand(seed);
 #ifdef GPU
         cuda_set_device(gpus[i]);
 #endif
-        nets[i] = load_network(cfgfile, weightfile, clear);
-        nets[i]->learning_rate *= ngpus;
+        nets[i] = load_network(cfgfile, weightfile, clear); // 获取训练参数、网络结构、预训练模型, clear是否清除训练次数记录的标志
+        nets[i]->learning_rate *= ngpus;    // 初始学习率调整，这里 base_lr * GPU个数
     }
     srand(time(0));
-    network *net = nets[0];
+    network *net = nets[0]; // 网络指针，指向第一个网络参数，用于获取训练参数
 
-    int imgs = net->batch * net->subdivisions * ngpus;
-    printf("Learning Rate: %g, Momentum: %g, Decay: %g\n", net->learning_rate, net->momentum, net->decay);
+    int imgs = net->batch * net->subdivisions * ngpus;  // 迭代训练一次载入到显存的图片量，防止内存不足，可调整subdivisions大小来分批加载出整个batch
+    printf("Learning Rate: %g, Momentum: %g, Decay: %g\n", net->learning_rate, net->momentum, net->decay);  // 初始学习率，上一次梯度值的权重，梯度衰减
     data train, buffer;
 
-    layer l = net->layers[net->n - 1];
+    layer l = net->layers[net->n - 1];      // 网络结构中最后一层，region层的参数
+    // 标签的参数
+    int classes = l.classes;    // 类别数
+    float jitter = l.jitter;    // 数据抖动
 
-    int classes = l.classes;
-    float jitter = l.jitter;
-
-    list *plist = get_paths(train_images);
+    list *plist = get_paths(train_images);  // 根据训练集列表，获取训练数据路径，到链表list中
     //int N = plist->size;
-    char **paths = (char **)list_to_array(plist);
+    char **paths = (char **)list_to_array(plist);   //转为字符指针数组
 
-    load_args args = get_base_args(net);
-    args.coords = l.coords;
+    // 训练参数：一个batch的训练数据、数量、训练图像的增广参数、标签抖动参数
+    load_args args = get_base_args(net);    // 从net解析训练增广参数：w、h、max_crop、min_crop、angle、aspect、hue、saturation、exposure、center
+    args.coords = l.coords;     //
     args.paths = paths;
     args.n = imgs;
     args.m = plist->size;
