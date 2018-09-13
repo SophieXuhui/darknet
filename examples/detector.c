@@ -43,7 +43,7 @@ void train_detector(char *datacfg, char *cfgfile, char *weightfile, int *gpus, i
     char **paths = (char **)list_to_array(plist);   //转为字符指针数组
 
     // 训练参数：一个batch的训练数据、数量、训练图像的增广参数、标签抖动参数
-    load_args args = get_base_args(net);    // 从net解析训练增广参数：w、h、max_crop、min_crop、angle、aspect、hue、saturation、exposure、center
+    load_args args = get_base_args(net);    // 从net解析训练基本参数，主要为图像的增广参数：w、h、max_crop、min_crop、angle、aspect、hue、saturation、exposure、center
     args.coords = l.coords;     //
     args.paths = paths;
     args.n = imgs;
