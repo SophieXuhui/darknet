@@ -4,16 +4,16 @@
 #include "option_list.h"
 #include "utils.h"
 
-list *read_data_cfg(char *filename)
+list *read_data_cfg(char *filename)         // 解析.data数据集配置文件，并将结果按照 key、val一组插入list中
 {
     FILE *file = fopen(filename, "r");
     if(file == 0) file_error(filename);
     char *line;
     int nu = 0;
     list *options = make_list();
-    while((line=fgetl(file)) != 0){
+    while((line=fgetl(file)) != 0){     // 在打开的data文件中，逐行处理
         ++ nu;
-        strip(line);
+        strip(line);    // 去除line字符串中的空格、tab、换行，紧缩为一行信息
         switch(line[0]){
             case '\0':
             case '#':
@@ -21,7 +21,7 @@ list *read_data_cfg(char *filename)
                 free(line);
                 break;
             default:
-                if(!read_option(line, options)){
+                if(!read_option(line, options)){   // 解析当前行，以“=”为分割符，获取key、val
                     fprintf(stderr, "Config file error line %d, could parse: %s\n", nu, line);
                     free(line);
                 }
@@ -49,7 +49,7 @@ metadata get_metadata(char *file)
     return m;
 }
 
-int read_option(char *s, list *options)
+int read_option(char *s, list *options)     // 解析一行字符串，以“=”为分割符，获取key、val，并插入list
 {
     size_t i;
     size_t len = strlen(s);
