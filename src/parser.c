@@ -640,18 +640,18 @@ learning_rate_policy get_policy(char *s)
     return CONSTANT;
 }
 
-void parse_net_options(list *options, network *net)
+void parse_net_options(list *options, network *net)     // 解析网络结构第一部分[net]的参数
 {
-    net->batch = option_find_int(options, "batch",1);
-    net->learning_rate = option_find_float(options, "learning_rate", .001);
-    net->momentum = option_find_float(options, "momentum", .9);
-    net->decay = option_find_float(options, "decay", .0001);
-    int subdivs = option_find_int(options, "subdivisions",1);
-    net->time_steps = option_find_int_quiet(options, "time_steps",1);
+    net->batch = option_find_int(options, "batch",1);                       // 批量，默认值为1
+    net->learning_rate = option_find_float(options, "learning_rate", .001); // 基础学习率，默认值为1，权重每次靠近真实值的调整幅度
+    net->momentum = option_find_float(options, "momentum", .9);             // 冲量，加大更新权重幅度，加速收敛，防止学习缓慢，陷入局部最优解
+    net->decay = option_find_float(options, "decay", .0001);                // 权重衰减，抑制高阶权重的变化幅度，防止过拟合
+    int subdivs = option_find_int(options, "subdivisions",1);               // 防止一个批量加载时显存不足，分小批量加载
+    net->time_steps = option_find_int_quiet(options, "time_steps",1);       // 调整训练迭代中的batch
     net->notruth = option_find_int_quiet(options, "notruth",0);
-    net->batch /= subdivs;
-    net->batch *= net->time_steps;
-    net->subdivisions = subdivs;
+    net->batch /= subdivs;                                      // batch，按照subdivs平均分割，已经不是原始输入的batch值了
+    net->batch *= net->time_steps;                              // 按照time_steps，逐步调整batch
+    net->subdivisions = subdivs;                                // 几均分batch
     net->random = option_find_int_quiet(options, "random", 0);
 
     net->adam = option_find_int_quiet(options, "adam", 0);
@@ -729,17 +729,17 @@ int is_network(section *s)
 
 network *parse_network_cfg(char *filename)
 {
-    list *sections = read_cfg(filename);
-    node *n = sections->front;
+    list *sections = read_cfg(filename);    // 读取网络结构文件并解析到内存，各层之间、层内部以链表的形式存储
+    node *n = sections->front;      // 获取首节点
     if(!n) error("Config file has no sections");
-    network *net = make_network(sections->size - 1);
-    net->gpu_index = gpu_index;
+    network *net = make_network(sections->size - 1); // 分配一个net的内存，同时分配其中的layers内存，共sections->size-1层
+    net->gpu_index = gpu_index; // 当前gpu号
     size_params params;
-
-    section *s = (section *)n->val;
-    list *options = s->options;
-    if(!is_network(s)) error("First section must be [net] or [network]");
-    parse_net_options(options, net);
+    // 解析网络结构第一层[net]或者[network]的参数 =》训练参数
+    section *s = (section *)n->val; // n为首节点，n->val为首节点的值域，强转为section(char *type、list)，网络结构中的一层
+    list *options = s->options;     // 当前层的信息
+    if(!is_network(s)) error("First section must be [net] or [network]");   //检查当前层的type字符串，第一层为网络参数信息
+    parse_net_options(options, net);// 解析网络结构第一层参数 =》即，训练相关参数
 
     params.h = net->h;
     params.w = net->w;
@@ -879,17 +879,17 @@ list *read_cfg(char *filename)
     if(file == 0) file_error(filename);
     char *line;
     int nu = 0;
-    list *options = make_list();
+    list *options = make_list();    // 存储解析网络结构的内容
     section *current = 0;
     while((line=fgetl(file)) != 0){
         ++ nu;
         strip(line);
         switch(line[0]){
             case '[':
-                current = malloc(sizeof(section));
-                list_insert(options, current);
-                current->options = make_list();
-                current->type = line;
+                current = malloc(sizeof(section));  // 存储解析的当前一个层的信息，以[]开头的部分
+                list_insert(options, current);      // 将当前层块插入到整个网络结构信息链表中
+                current->options = make_list();     // 当前层的所有信息，也以链表的形式串起来存储
+                current->type = line;               // 记录当前层的类型，[net]、[convolutional]、[route]
                 break;
             case '\0':
             case '#':
@@ -897,7 +897,7 @@ list *read_cfg(char *filename)
                 free(line);
                 break;
             default:
-                if(!read_option(line, current->options)){
+                if(!read_option(line, current->options)){   // 解析当前行, 以“=”为分隔符，获取key、val的kvp组，并插入所在的层块的链表中
                     fprintf(stderr, "Config file error line %d, could parse: %s\n", nu, line);
                     free(line);
                 }
